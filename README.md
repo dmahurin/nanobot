@@ -236,6 +236,11 @@ nanobot gateway
 }
 ```
 
+**Limitations (current implementation)**
+- Global allowlist only (`allowFrom`); no `groupPolicy`, `dm.policy`, or per-guild/per-channel rules
+- No `requireMention` or per-channel enable/disable
+- Outbound messages are text only (no file uploads)
+
 **4. Invite the bot**
 - OAuth2 → URL Generator
 - Scopes: `bot`

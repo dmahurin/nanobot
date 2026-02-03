@@ -53,6 +53,8 @@ class LiteLLMProvider(LLMProvider):
                 os.environ.setdefault("GEMINI_API_KEY", api_key)
             elif "zhipu" in default_model or "glm" in default_model or "zai" in default_model:
                 os.environ.setdefault("ZHIPUAI_API_KEY", api_key)
+            elif "dashscope" in default_model or "qwen" in default_model.lower():
+                os.environ.setdefault("DASHSCOPE_API_KEY", api_key)
             elif "groq" in default_model:
                 os.environ.setdefault("GROQ_API_KEY", api_key)
             elif "moonshot" in default_model or "kimi" in default_model:
@@ -100,6 +102,13 @@ class LiteLLMProvider(LLMProvider):
             model.startswith("openrouter/")
         ):
             model = f"zai/{model}"
+
+        # For DashScope/Qwen, ensure dashscope/ prefix
+        if ("qwen" in model.lower() or "dashscope" in model.lower()) and not (
+            model.startswith("dashscope/") or
+            model.startswith("openrouter/")
+        ):
+            model = f"dashscope/{model}"
 
         # For Moonshot/Kimi, ensure moonshot/ prefix (before vLLM check)
         if ("moonshot" in model.lower() or "kimi" in model.lower()) and not (

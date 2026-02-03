@@ -113,33 +113,9 @@ For OpenRouter - recommended for global users:
     "defaults": {
       "model": "anthropic/claude-opus-4-5"
     }
-  },
-  "tools": {
-    "web": {
-      "search": {
-        "apiKey": "BSA-xxx"
-      }
-    }
   }
 }
 ```
-
-For DashScope - recommended for China users:
-```json
-{
-  "providers": {
-    "dashscope": {
-      "apiKey": "sk-xxx"
-    }
-  },
-  "agents": {
-    "defaults": {
-      "model": "qwen-plus"
-    }
-  }
-}
-```
-
 
 **3. Chat**
 

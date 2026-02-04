@@ -166,12 +166,13 @@ nanobot agent -m "Hello from my local LLM!"
 
 ## 💬 Chat Apps
 
-Talk to your nanobot through Telegram or WhatsApp — anytime, anywhere.
+Talk to your nanobot through Telegram, WhatsApp, or Feishu — anytime, anywhere.
 
 | Channel | Setup |
 |---------|-------|
 | **Telegram** | Easy (just a token) |
 | **WhatsApp** | Medium (scan QR) |
+| **Feishu** | Medium (app credentials) |
 
 <details>
 <summary><b>Telegram</b> (Recommended)</summary>
@@ -242,6 +243,56 @@ nanobot gateway
 
 </details>
 
+<details>
+<summary><b>Feishu (飞书)</b></summary>
+
+Uses **WebSocket** long connection — no public IP required.
+
+Requires **lark-oapi** SDK:
+
+```bash
+pip install lark-oapi
+```
+
+**1. Create a Feishu bot**
+- Visit [Feishu Open Platform](https://open.feishu.cn/app)
+- Create a new app (Custom App)
+- Enable bot capability
+- Add event subscription: `im.message.receive_v1`
+- Get credentials:
+  - **App ID** and **App Secret** from "Credentials & Basic Info"
+  - **Verification Token** and **Encrypt Key** from "Event Subscriptions"
+
+**2. Configure**
+
+```json
+{
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "appId": "cli_xxx",
+      "appSecret": "xxx",
+      "verificationToken": "xxx",
+      "encryptKey": "xxx",
+      "allowFrom": ["ou_xxx"]
+    }
+  }
+}
+```
+
+> Get your Open ID by sending a message to the bot, or from Feishu admin console.
+
+**3. Run**
+
+```bash
+nanobot gateway
+```
+
+> [!TIP]
+> Feishu uses WebSocket to receive messages — no webhook or public IP needed!
+
+</details>
+
 ## ⚙️ Configuration
 
 Config file: `~/.nanobot/config.json`
@@ -286,6 +337,14 @@ Config file: `~/.nanobot/config.json`
     },
     "whatsapp": {
       "enabled": false
+    },
+    "feishu": {
+      "enabled": false,
+      "appId": "cli_xxx",
+      "appSecret": "xxx",
+      "verificationToken": "xxx",
+      "encryptKey": "xxx",
+      "allowFrom": ["ou_xxx"]
     }
   },
   "tools": {

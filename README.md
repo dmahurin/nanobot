@@ -312,7 +312,7 @@ nanobot gateway
 <details>
 <summary><b>Matrix (Element)</b></summary>
 
-Uses Matrix sync via `matrix-nio` (including inbound media support).
+Uses Matrix sync via `matrix-nio` (inbound media + outbound file attachments).
 
 **1. Create/choose a Matrix account**
 
@@ -343,7 +343,7 @@ Uses Matrix sync via `matrix-nio` (including inbound media support).
       "groupPolicy": "open",
       "groupAllowFrom": [],
       "allowRoomMentions": false,
-      "maxInboundMediaBytes": 20971520
+      "maxMediaBytes": 20971520
     }
   }
 }
@@ -364,6 +364,9 @@ Uses Matrix sync via `matrix-nio` (including inbound media support).
 > - With `e2eeEnabled=false`, encrypted room messages may be undecryptable and E2EE send safeguards are not applied.
 > - With `e2eeEnabled=true`, the bot sends with `ignore_unverified_devices=true` (more compatible, less strict than verified-only sending).
 > - Changing `accessToken`/`deviceId` effectively creates a new device and may require session re-establishment.
+> - Outbound attachments are sent from `OutboundMessage.media`.
+> - Effective media limit (inbound + outbound) uses the stricter value of local `maxMediaBytes` and homeserver `m.upload.size` (if advertised).
+> - If `tools.restrictToWorkspace=true`, Matrix outbound attachments are limited to files inside the workspace.
 
 **4. Run**
 

@@ -150,7 +150,8 @@ class AgentLoop:
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
-                model=self.model
+                model=self.model,
+                temperature=self.temperature,
             )
 
             if response.has_tool_calls:
@@ -287,10 +288,7 @@ class AgentLoop:
         final_content, tools_used = await self._run_agent_loop(initial_messages)
 
         if final_content is None:
-            if iteration >= self.max_iterations:
-                final_content = f"Reached {self.max_iterations} iterations without completion."
-            else:
-                final_content = "I've completed processing but have no response to give."
+            final_content = "I've completed processing but have no response to give."
         
         # Log response preview
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content

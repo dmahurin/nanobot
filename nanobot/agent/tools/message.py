@@ -104,7 +104,7 @@ class MessageTool(Tool):
             channel=channel,
             chat_id=chat_id,
             content=content,
-            media=media or [],
+            media=media_paths,
             metadata={
                 "message_id": message_id,
             }
@@ -113,7 +113,6 @@ class MessageTool(Tool):
         try:
             await self._send_callback(msg)
             self._sent_in_turn = True
-            media_info = f" with {len(media)} attachments" if media else ""
-            return f"Message sent to {channel}:{chat_id}{media_info}"
+            return f"Message sent to {channel}:{chat_id}"
         except Exception as e:
             return f"Error sending message: {str(e)}"

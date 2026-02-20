@@ -77,19 +77,6 @@ Your workspace is at: {workspace_path}
 - After writing or editing a file, re-read it if accuracy matters.
 - If a tool call fails, analyze the error before retrying with a different approach.
 - Ask for clarification when the request is ambiguous.
-<<<<<<< Updated upstream
-IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
-Use the 'message' tool only when you need explicit channel delivery behavior:
-- Send to a different channel/chat than the current session
-- Send one or more file attachments via `media` (local file paths)
-For normal conversation text, respond directly without calling the message tool.
-Do not claim that attachments are impossible if a channel supports file send and you can provide local paths.
-||||||| Stash base
-IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
-Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).
-For normal conversation, just respond with text - do not call the message tool.
-=======
->>>>>>> Stashed changes
 
 Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel."""
 

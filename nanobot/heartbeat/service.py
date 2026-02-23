@@ -36,6 +36,7 @@ def _is_heartbeat_empty(content: str | None) -> bool:
     return True
 
 
+
 class HeartbeatService:
     """
     Periodic heartbeat service that wakes the agent to check for tasks.
@@ -79,6 +80,9 @@ class HeartbeatService:
         """Start the heartbeat service."""
         if not self.enabled:
             logger.info("Heartbeat disabled")
+            return
+        if self._running:
+            logger.warning("Heartbeat already running")
             return
         
         self._running = True

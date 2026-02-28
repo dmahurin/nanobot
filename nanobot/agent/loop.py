@@ -92,6 +92,7 @@ class AgentLoop:
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
+
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -105,6 +106,8 @@ class AgentLoop:
             provider_factory=self.provider_factory,
         )
 
+        self._register_default_tools(self.tools)
+
         self._running = False
         self._mcp_servers = mcp_servers or {}
         self._mcp_stack: AsyncExitStack | None = None
@@ -113,6 +116,7 @@ class AgentLoop:
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._background_tasks: list[asyncio.Task] = []
         self._processing_lock = asyncio.Lock()
+
         self.memory_consolidator = MemoryConsolidator(
             workspace=workspace,
             provider=provider,
@@ -122,28 +126,30 @@ class AgentLoop:
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
         )
-        self._register_default_tools()
 
-    def _register_default_tools(self) -> None:
-        """Register the default set of tools."""
+    def _register_filesystem_tools(self, tools, working_dir) -> None:
+        """Register filesystem tools for a session-specific working directory."""
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
-        self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
+        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
         for cls in (WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
+            tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
         if self.exec_config.enable:
-            self.tools.register(ExecTool(
+            tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
             ))
-        self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
-        self.tools.register(WebFetchTool(proxy=self.web_proxy))
-        self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
-        self.tools.register(SpawnTool(manager=self.subagents))
+
+    def _register_default_tools(self, tools) -> None:
+        """Register the default set of tools."""
+        tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
+        tools.register(WebFetchTool(proxy=self.web_proxy))
+        tools.register(MessageTool(send_callback=self.bus.publish_outbound))
+        tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
+            register(CronTool(self.cron_service))
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -218,6 +224,7 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        session_tools: ToolRegistry | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop."""
         messages = initial_messages
@@ -229,6 +236,8 @@ class AgentLoop:
             iteration += 1
 
             tool_defs = self.tools.get_definitions()
+            if session_tools is not None:
+                tool_defs.extend(session_tools.get_definitions())
 
             response = await self.provider.chat_with_retry(
                 messages=messages,
@@ -261,11 +270,12 @@ class AgentLoop:
                 )
 
                 for tool_call in response.tool_calls:
+                    tools = session_tools if (session_tools and session_tools.has(tool_call.name)) else self.tools
                     tools_used.append(tool_call.name)
                     max_len = 60
                     args_str = json.dumps({k: (v[:max_len-3]+"..." if isinstance(v,str) and len(v)>max_len else v) for k,v in tool_call.arguments.items()})
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
@@ -438,6 +448,10 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        session_dir = self.workspace / key.replace(':', '_')
+
+        session_tools = ToolRegistry()
+        self._register_filesystem_tools(session_tools, session_dir)
 
         # Slash commands
         cmd = msg.content.strip().lower()
@@ -494,6 +508,7 @@ class AgentLoop:
 
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages, on_progress=on_progress or _bus_progress,
+            session_tools = session_tools,
         )
 
         if final_content is None:

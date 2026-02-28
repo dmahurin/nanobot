@@ -81,7 +81,6 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
-        self.tools = ToolRegistry()
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -100,6 +99,10 @@ class AgentLoop:
         self._mcp_connecting = False
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._processing_lock = asyncio.Lock()
+
+        self.tools = self._register_default_tools()
+        self.session_tools = {}
+
         self.memory_consolidator = MemoryConsolidator(
             workspace=workspace,
             provider=provider,
@@ -109,25 +112,31 @@ class AgentLoop:
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
         )
-        self._register_default_tools()
 
-    def _register_default_tools(self) -> None:
-        """Register the default set of tools."""
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
+    def _register_filesystem_tools(self, working_dir) -> ToolRegistry:
+        """Register filesystem tools for a session-specific working directory."""
+        tools = ToolRegistry()
+        allowed_dir = working_dir if self.restrict_to_workspace else None
         for cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
+            tools.register(cls(workspace=working_dir, allowed_dir=allowed_dir))
+        tools.register(ExecTool(
+            working_dir=str(working_dir),
             timeout=self.exec_config.timeout,
             restrict_to_workspace=self.restrict_to_workspace,
             path_append=self.exec_config.path_append,
         ))
-        self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
-        self.tools.register(WebFetchTool(proxy=self.web_proxy))
-        self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
-        self.tools.register(SpawnTool(manager=self.subagents))
+        return tools
+
+    def _register_default_tools(self) -> ToolRegistry:
+        """Register the default set of tools."""
+        tools = ToolRegistry()
+        tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
+        tools.register(WebFetchTool(proxy=self.web_proxy))
+        tools.register(MessageTool(send_callback=self.bus.publish_outbound))
+        tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
+            tools.register(CronTool(self.cron_service))
+        return tools
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -180,6 +189,7 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
+        session_tools: ToolRegistry | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop."""
         messages = initial_messages
@@ -191,6 +201,8 @@ class AgentLoop:
             iteration += 1
 
             tool_defs = self.tools.get_definitions()
+            if session_tools is not None:
+                tool_defs.extend(session_tools.get_definitions())
 
             response = await self.provider.chat_with_retry(
                 messages=messages,
@@ -216,10 +228,11 @@ class AgentLoop:
                 )
 
                 for tool_call in response.tool_calls:
+                    tools = session_tools if (session_tools and session_tools.has(tool_call.name)) else self.tools
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
@@ -368,6 +381,9 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        self.session_tools.setdefault(key, self._register_filesystem_tools(self.workspace / key.replace(':', '_')))
+
+        session_tools = self.session_tools[key]
 
         # Slash commands
         cmd = msg.content.strip().lower()
@@ -428,6 +444,7 @@ class AgentLoop:
 
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages, on_progress=on_progress or _bus_progress,
+            session_tools = session_tools,
         )
 
         if final_content is None:

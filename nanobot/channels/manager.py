@@ -204,7 +204,7 @@ class ChannelManager:
                     self.bus.consume_outbound(),
                     timeout=1.0
                 )
-                
+
                 if msg.metadata.get("_progress"):
                     if msg.metadata.get("_tool_hint") and not self.config.channels.send_tool_hints:
                         continue

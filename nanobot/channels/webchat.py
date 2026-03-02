@@ -126,10 +126,10 @@ HTML_PAGE = """<!doctype html>
   <title>web chat</title>
   <style>
     :root {
-      --panel: #7f7a741f;
-      --line: #d4c6b37f;
-      --accent: #13c3007f;
-      --accent-2: #164e637f;
+      --panel: #7f81861e;
+      --line: #8f90a054;
+      --accent: #6f5ff07f;
+      --accent-dim: #4f46a07f;
       --danger: #9f12397f;
     }
     * { box-sizing: border-box; }
@@ -198,7 +198,7 @@ HTML_PAGE = """<!doctype html>
       border-color: var(--accent);
       transition: background .15s ease;
     }
-    button:hover { background: var(--accent-2); }
+    button:hover { background: var(--accent-dim); }
     button[disabled] { cursor: not-allowed; opacity: 0.7; }
 
     .chat {
@@ -231,7 +231,7 @@ HTML_PAGE = """<!doctype html>
       line-height: 1.35;
       animation: fadein .2s ease;
     }
-    .user { align-self: flex-end; background: #e7f2ff7f; border-color: #b7d2f2; }
+    .user { align-self: flex-end; background: #b0b8d7f; border-color: var(--line); }
     .assistant { align-self: flex-start; background: #7777777f; }
     .system { align-self: center; font-size: 12px; }
     .error { border-color: #fecdd3; background: #fff1f27f; color: var(--danger); }
@@ -286,7 +286,13 @@ HTML_PAGE = """<!doctype html>
       <form id="send-form">
         <button id="back-btn">&larr; Back</button>
         <textarea id="prompt" placeholder="Type a message" required></textarea>
-        <button id="send-btn" type="submit">Send</button>
+        <button type="submit" id="send-btn" aria-label="Send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
       </form>
     </section>
   </main>

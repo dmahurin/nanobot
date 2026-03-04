@@ -407,6 +407,9 @@ class AgentLoop:
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
         session_dir = self.workspace / key.replace(':', '_')
+        if msg.content == '':
+            session_dir.mkdir(exist_ok=True)
+            return None
 
         session_tools = ToolRegistry()
         self._register_filesystem_tools(session_tools, session_dir)

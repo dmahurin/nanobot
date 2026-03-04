@@ -313,18 +313,22 @@ HTML_PAGE = """<!doctype html>
       shell.classList.remove('show-chat');
     };
 
-    newChatForm.onsubmit = (ev) => {
+    newChatForm.onsubmit = async (ev) => {
       ev.preventDefault();
       const title = chatTitleInput.value.trim();
       if (!title) return;
       const id = ((Math.floor(512 * (1+Math.random())) + (Date.now() & 0x3FF)) * Date.now()).toString(16)
       const newChat = { id, title, created_at: new Date().toISOString().replace('T', ' ').replace('Z', '') };
       chats.push(newChat);
-      saveChats();
+      const r = await fetch(`/api/chats/${id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
       saveChats(chats);
       renderChats();
       chatTitleInput.value = '';
-      selectChat(created.id);
+      selectChat(id);
     };
 
     sendForm.onsubmit = async (ev) => {
@@ -358,6 +362,13 @@ HTML_PAGE = """<!doctype html>
 
       sendBtn.disabled = false;
     };
+
+    promptBox.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendForm.requestSubmit();
+      }
+    });
 
     loadChats();
     setupSSE();
@@ -411,8 +422,6 @@ class WebChatChannel(BaseChannel):
         async def post_message(chat_id):
             data = request.json
             content = data.get('content', '').strip()
-            if not content:
-                return jsonify({"error": "content is required"}), 400
 
             try:
                 # Use the BaseChannel._handle_message directly via await

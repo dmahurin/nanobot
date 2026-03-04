@@ -393,7 +393,11 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
-        self.session_tools.setdefault(key, self._register_filesystem_tools(ToolRegistry(), self.workspace / key.replace(':', '_')))
+        session_dir = self.workspace / key.replace(':', '_')
+        if msg.content == '':
+            session_dir.mkdir(exist_ok=True)
+            return None
+        self.session_tools.setdefault(key, self._register_filesystem_tools(ToolRegistry(), session_dir))
 
         session_tools = self.session_tools[key]
 

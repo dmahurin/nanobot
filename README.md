@@ -722,6 +722,9 @@ nanobot provider login openai-codex
 **3. Chat:**
 ```bash
 nanobot agent -m "Hello!"
+
+# Target a specific workspace/config locally
+nanobot agent -w ~/.nanobot/botA -c ~/.nanobot/botA/config.json -m "Hello!"
 ```
 
 > Docker users: use `docker run -it` for interactive OAuth login.
@@ -924,6 +927,14 @@ nanobot gateway --config ~/.nanobot-feishu/config.json --port 18792
 
 When using `--config`, nanobot derives its runtime data directory from the config file location. The workspace still comes from `agents.defaults.workspace` unless you override it with `--workspace`.
 
+To open a CLI session against one of these instances locally:
+
+```bash
+nanobot agent -w ~/.nanobot/botA -m "Hello from botA"
+nanobot agent -w ~/.nanobot/botC -c ~/.nanobot/botC/config.json
+```
+
+> `nanobot agent` starts a local CLI agent using the selected workspace/config. It does not attach to or proxy through an already running `nanobot gateway` process.
 | Component | Resolved From | Example |
 |-----------|---------------|---------|
 | **Config** | `--config` path | `~/.nanobot-A/config.json` |
@@ -998,6 +1009,8 @@ nanobot gateway --config ~/.nanobot-telegram/config.json --workspace /tmp/nanobo
 |---------|-------------|
 | `nanobot onboard` | Initialize config & workspace |
 | `nanobot agent -m "..."` | Chat with the agent |
+| `nanobot agent -w <workspace>` | Chat against a specific workspace |
+| `nanobot agent -w <workspace> -c <config>` | Chat against a specific workspace/config |
 | `nanobot agent` | Interactive chat mode |
 | `nanobot agent --no-markdown` | Show plain-text replies |
 | `nanobot agent --logs` | Show runtime logs during chat |

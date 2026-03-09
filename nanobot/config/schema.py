@@ -125,6 +125,13 @@ class EmailConfig(Base):
     allow_from: list[str] = Field(default_factory=list)  # Allowed sender email addresses
 
 
+class EndpointConfig(Base):
+    enabled: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8080
+    allow_from: list[str] = Field(default_factory=lambda: ["*"])
+
+
 class MochatMentionConfig(Base):
     """Mochat mention behavior configuration."""
 
@@ -222,6 +229,7 @@ class ChannelsConfig(Base):
     mochat: MochatConfig = Field(default_factory=MochatConfig)
     dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
     email: EmailConfig = Field(default_factory=EmailConfig)
+    endpoint: EndpointConfig = Field(default_factory=EndpointConfig)
     slack: SlackConfig = Field(default_factory=SlackConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
     matrix: MatrixConfig = Field(default_factory=MatrixConfig)

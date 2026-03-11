@@ -853,6 +853,7 @@ pip install flask[async]
   "channels": {
     "endpoint": {
       "enabled": true,
+      "api_key": "xxx",
       "host": "0.0.0.0",
       "port": 8080
     }
@@ -871,22 +872,17 @@ nanobot gateway
 ```
 curl -X POST "http://localhost:8080/v1/responses" \
      -H "Content-Type: application/json" \
+     -H "Authorization: Bearer xxx"
      -d '{
-       "model": "agent-v1",
-       "messages": [
-         {
-           "role": "user",
-           "content": "Who are you?"
-         }
-       ],
-       "user": "test-user"
+       "model": "any",
+       "input": "who are you?"
      }'
 ```
 
 **4. Example external channel **
 
 ```
-python tests/test_endpoint_webchat_server.py
+NANOBOT_API_KEY=xxx python tests/test_endpoint_webchat_server.py
 ```
 
 </details>

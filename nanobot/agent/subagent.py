@@ -3,6 +3,7 @@
 import asyncio
 import json
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +15,10 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ExecToolConfig
+from nanobot.config.schema import AgentsConfig, ExecToolConfig
+from nanobot.config.paths import get_workspace_path
 from nanobot.providers.base import LLMProvider
-from nanobot.utils.helpers import build_assistant_message
+from nanobot.utils.helpers import build_assistant_message, sync_workspace_templates
 
 
 class SubagentManager:
@@ -28,6 +30,7 @@ class SubagentManager:
         workspace: Path,
         bus: MessageBus,
         model: str | None = None,
+        agents_config: AgentsConfig | None = None,
         web_search_config: "WebSearchConfig | None" = None,
         web_proxy: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
@@ -43,13 +46,33 @@ class SubagentManager:
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.agents = agents_config or AgentsConfig()
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+
+    def available_agents(self) -> list[str]:
+        """Return available named agent profiles."""
+        return self.agents.list_agents()
+
+    def _resolve_agent_config(self, agent: str | None) -> tuple[str, "AgentDefaults"]:
+        """Resolve agent name to config; fallback to defaults if missing."""
+        from nanobot.config.schema import AgentDefaults
+
+        if not agent or agent == "defaults":
+            return "defaults", self.agents.defaults
+        cfg = self.agents.get_agent(agent)
+        if cfg is None:
+            logger.warning("Unknown agent profile '{}'; falling back to defaults", agent)
+            return "defaults", self.agents.defaults
+        if not isinstance(cfg, AgentDefaults):
+            cfg = AgentDefaults.model_validate(cfg)
+        return agent, cfg
 
     async def spawn(
         self,
         task: str,
         label: str | None = None,
+        agent: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
@@ -60,7 +83,7 @@ class SubagentManager:
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin)
+            self._run_subagent(task_id, task, display_label, origin, agent)
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -84,20 +107,25 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
+        agent: str | None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
 
         try:
+            agent_name, agent_cfg = self._resolve_agent_config(agent)
+            workspace = get_workspace_path(agent_cfg.workspace)
+            sync_workspace_templates(workspace, silent=True)
+
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
-            allowed_dir = self.workspace if self.restrict_to_workspace else None
-            tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            allowed_dir = workspace if self.restrict_to_workspace else None
+            tools.register(ReadFileTool(workspace=workspace, allowed_dir=allowed_dir))
+            tools.register(WriteFileTool(workspace=workspace, allowed_dir=allowed_dir))
+            tools.register(EditFileTool(workspace=workspace, allowed_dir=allowed_dir))
+            tools.register(ListDirTool(workspace=workspace, allowed_dir=allowed_dir))
             tools.register(ExecTool(
-                working_dir=str(self.workspace),
+                working_dir=str(workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
@@ -105,7 +133,7 @@ class SubagentManager:
             tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
             tools.register(WebFetchTool(proxy=self.web_proxy))
             
-            system_prompt = self._build_subagent_prompt()
+            system_prompt = self._build_subagent_prompt(workspace, agent_name)
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
@@ -122,7 +150,10 @@ class SubagentManager:
                 response = await self.provider.chat_with_retry(
                     messages=messages,
                     tools=tools.get_definitions(),
-                    model=self.model,
+                    model=agent_cfg.model or self.model,
+                    max_tokens=agent_cfg.max_tokens,
+                    temperature=agent_cfg.temperature,
+                    reasoning_effort=agent_cfg.reasoning_effort,
                 )
 
                 if response.has_tool_calls:
@@ -154,6 +185,8 @@ class SubagentManager:
 
             if final_result is None:
                 final_result = "Task completed but no final response was generated."
+
+            await self._consolidate_memory(workspace, agent_cfg.model or self.model, messages)
 
             logger.info("Subagent [{}] completed successfully", task_id)
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
@@ -195,27 +228,42 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
         await self.bus.publish_inbound(msg)
         logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
     
-    def _build_subagent_prompt(self) -> str:
+    def _build_subagent_prompt(self, workspace: Path, agent_name: str) -> str:
         """Build a focused system prompt for the subagent."""
         from nanobot.agent.context import ContextBuilder
-        from nanobot.agent.skills import SkillsLoader
 
+        base = ContextBuilder(workspace).build_system_prompt()
         time_ctx = ContextBuilder._build_runtime_context(None, None)
-        parts = [f"""# Subagent
+        profile_note = f"Agent Profile: {agent_name}" if agent_name else ""
+        tail = f"""# Subagent
 
 {time_ctx}
 
 You are a subagent spawned by the main agent to complete a specific task.
 Stay focused on the assigned task. Your final response will be reported back to the main agent.
+{profile_note}"""
+        return "\n\n---\n\n".join([base, tail]) if base else tail
 
-## Workspace
-{self.workspace}"""]
+    async def _consolidate_memory(
+        self,
+        workspace: Path,
+        model: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Persist subagent memory for this workspace."""
+        from nanobot.agent.memory import MemoryStore
 
-        skills_summary = SkillsLoader(self.workspace).build_skills_summary()
-        if skills_summary:
-            parts.append(f"## Skills\n\nRead SKILL.md with read_file to use a skill.\n\n{skills_summary}")
-
-        return "\n\n".join(parts)
+        memory_messages: list[dict[str, Any]] = []
+        for m in messages:
+            if m.get("role") == "system":
+                continue
+            entry = dict(m)
+            entry.setdefault("timestamp", datetime.now().isoformat())
+            memory_messages.append(entry)
+        if not memory_messages:
+            return
+        store = MemoryStore(workspace)
+        await store.consolidate(memory_messages, self.provider, model)
 
     async def cancel_by_session(self, session_key: str) -> int:
         """Cancel all subagents for the given session. Returns count cancelled."""

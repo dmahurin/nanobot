@@ -254,7 +254,47 @@ class AgentDefaults(Base):
 class AgentsConfig(Base):
     """Agent configuration."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="allow")
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+
+    def get_agent(self, name: str | None) -> AgentDefaults | None:
+        """Return a named agent config if present (None if missing)."""
+        if not name or name == "defaults":
+            return self.defaults
+        extra = getattr(self, "__pydantic_extra__", None) or {}
+        raw = extra.get(name)
+        if raw is None:
+            return None
+        if isinstance(raw, AgentDefaults):
+            return raw
+        try:
+            return AgentDefaults.model_validate(raw)
+        except Exception:
+            return None
+
+    def list_agents(self) -> list[str]:
+        """Return configured agent profile names (excluding defaults)."""
+        extra = getattr(self, "__pydantic_extra__", None) or {}
+        return sorted([name for name in extra.keys() if name != "defaults"])
+
+    def model_dump(self, **kwargs):  # type: ignore[override]
+        """Dump agents config with named agents normalized to AgentDefaults."""
+        data = super().model_dump(**kwargs)
+        extra = getattr(self, "__pydantic_extra__", None) or {}
+        if not extra:
+            return data
+
+        by_alias = bool(kwargs.get("by_alias", False))
+        exclude_none = bool(kwargs.get("exclude_none", False))
+        for name, raw in extra.items():
+            if name == "defaults":
+                continue
+            try:
+                agent = raw if isinstance(raw, AgentDefaults) else AgentDefaults.model_validate(raw)
+                data[name] = agent.model_dump(by_alias=by_alias, exclude_none=exclude_none)
+            except Exception:
+                data[name] = raw
+        return data
 
 
 class ProviderConfig(Base):

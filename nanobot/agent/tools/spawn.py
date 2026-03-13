@@ -29,11 +29,20 @@ class SpawnTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
+        desc = (
             "Spawn a subagent to handle a task in the background. "
             "Use this for complex or time-consuming tasks that can run independently. "
             "The subagent will complete the task and report back when done."
         )
+        names = []
+        if hasattr(self._manager, "available_agents"):
+            try:
+                names = self._manager.available_agents()
+            except Exception:
+                names = []
+        if names:
+            desc += f" Available agent profiles: {', '.join(names)}. Use the agent field to select one."
+        return desc
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -48,15 +57,20 @@ class SpawnTool(Tool):
                     "type": "string",
                     "description": "Optional short label for the task (for display)",
                 },
+                "agent": {
+                    "type": "string",
+                    "description": "Optional agent profile name to use (defaults to main agent config)",
+                },
             },
             "required": ["task"],
         }
 
-    async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
+    async def execute(self, task: str, label: str | None = None, agent: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
         return await self._manager.spawn(
             task=task,
             label=label,
+            agent=agent,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
             session_key=self._session_key,

@@ -424,7 +424,7 @@ class AgentLoop:
                 return OutboundMessage(
                     channel=channel,
                     chat_id=chat_id,
-                    content=final_content,
+                    content=final_content or "Background task completed.",
                     metadata=meta,
                 )
                 

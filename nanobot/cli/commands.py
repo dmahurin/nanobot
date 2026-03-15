@@ -32,7 +32,7 @@ from rich.text import Text
 
 from nanobot import __logo__, __version__
 from nanobot.config.paths import get_workspace_path
-from nanobot.config.schema import Config
+from nanobot.config.schema import AgentDefaults, Config
 from nanobot.utils.helpers import sync_workspace_templates
 
 app = typer.Typer(
@@ -260,13 +260,13 @@ def onboard():
 
 
 
-def _make_provider(config: Config):
+def _make_provider(config: Config, model: str | None = None, defaults: AgentDefaults | None = None):
     """Create the appropriate LLM provider from config."""
     from nanobot.providers.base import GenerationSettings
     from nanobot.providers.openai_codex_provider import OpenAICodexProvider
     from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
 
-    model = config.agents.defaults.model
+    model = model or config.agents.defaults.model
     provider_name = config.get_provider_name(model)
     p = config.get_provider(model)
 
@@ -309,13 +309,62 @@ def _make_provider(config: Config):
             provider_name=provider_name,
         )
 
-    defaults = config.agents.defaults
+    defaults = defaults or config.agents.defaults
     provider.generation = GenerationSettings(
         temperature=defaults.temperature,
         max_tokens=defaults.max_tokens,
         reasoning_effort=defaults.reasoning_effort,
     )
     return provider
+
+
+def _build_agent_team(
+    config: Config,
+    bus: "MessageBus",
+    cron: "CronService | None",
+    session_manager: "SessionManager | None" = None,
+) -> dict[str, "AgentLoop"]:
+    from nanobot.agent.handoff import HandoffRouter
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.session.manager import SessionManager
+
+    agents = config.agents.list_members()
+    team = [{"name": name, "model": cfg.model} for name, cfg in agents.items()]
+
+    loops: dict[str, AgentLoop] = {}
+    is_primary = True
+    for name, cfg in agents.items():
+        workspace = Path(cfg.workspace).expanduser()
+        sync_workspace_templates(workspace)
+        provider = _make_provider(config, model=cfg.model, defaults=cfg)
+        loop = AgentLoop(
+            bus=bus,
+            provider=provider,
+            workspace=workspace,
+            model=cfg.model,
+            max_iterations=cfg.max_tool_iterations,
+            context_window_tokens=cfg.context_window_tokens,
+            web_search_config=config.tools.web.search,
+            web_proxy=config.tools.web.proxy or None,
+            exec_config=config.tools.exec,
+            cron_service=cron if is_primary else None,
+            restrict_to_workspace=config.tools.restrict_to_workspace,
+            session_manager=session_manager if (is_primary and session_manager) else SessionManager(workspace),
+            mcp_servers=config.tools.mcp_servers,
+            channels_config=config.channels,
+            agent_name=name,
+            team_members=team,
+        )
+        loops[name] = loop
+        is_primary = False
+
+    if len(loops) > 1:
+        default_name = next(iter(loops.keys()))
+        router = HandoffRouter(loops, default_name=default_name)
+        for loop in loops.values():
+            loop.attach_handoff(router)
+
+    return loops
 
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
@@ -360,7 +409,6 @@ def gateway(
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
 ):
     """Start the nanobot gateway."""
-    from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.manager import ChannelManager
     from nanobot.config.paths import get_cron_dir
@@ -380,30 +428,15 @@ def gateway(
     console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
-    provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
 
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_cron_dir() / "jobs.json"
     cron = CronService(cron_store_path)
 
-    # Create agent with cron service
-    agent = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        max_iterations=config.agents.defaults.max_tool_iterations,
-        context_window_tokens=config.agents.defaults.context_window_tokens,
-        web_search_config=config.tools.web.search,
-        web_proxy=config.tools.web.proxy or None,
-        exec_config=config.tools.exec,
-        cron_service=cron,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-        session_manager=session_manager,
-        mcp_servers=config.tools.mcp_servers,
-        channels_config=config.channels,
-    )
+    # Create agent team (default + optional handoff agents)
+    loops = _build_agent_team(config, bus=bus, cron=cron, session_manager=session_manager)
+    agent = next(iter(loops.values()))
 
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
@@ -492,7 +525,7 @@ def gateway(
     hb_cfg = config.gateway.heartbeat
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
-        provider=provider,
+        provider=agent.provider,
         model=agent.model,
         on_execute=on_heartbeat_execute,
         on_notify=on_heartbeat_notify,
@@ -550,42 +583,26 @@ def agent(
     """Interact with the agent directly."""
     from loguru import logger
 
-    from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
     from nanobot.config.paths import get_cron_dir
     from nanobot.cron.service import CronService
 
     config = _load_runtime_config(config, workspace)
     _print_deprecated_memory_window_notice(config)
-    sync_workspace_templates(config.workspace_path)
-
-    bus = MessageBus()
-    provider = _make_provider(config)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
     cron_store_path = get_cron_dir() / "jobs.json"
     cron = CronService(cron_store_path)
+    bus = MessageBus()
+    loops = _build_agent_team(config, bus=bus, cron=cron, session_manager=None)
+    agent_loop = next(iter(loops.values()))
 
     if logs:
         logger.enable("nanobot")
     else:
         logger.disable("nanobot")
 
-    agent_loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=config.workspace_path,
-        model=config.agents.defaults.model,
-        max_iterations=config.agents.defaults.max_tool_iterations,
-        context_window_tokens=config.agents.defaults.context_window_tokens,
-        web_search_config=config.tools.web.search,
-        web_proxy=config.tools.web.proxy or None,
-        exec_config=config.tools.exec,
-        cron_service=cron,
-        restrict_to_workspace=config.tools.restrict_to_workspace,
-        mcp_servers=config.tools.mcp_servers,
-        channels_config=config.channels,
-    )
+    # agent_loop created via _build_agent_team
 
     # Show spinner when logs are off (no output to miss); skip when logs are on
     def _thinking_ctx():

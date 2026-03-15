@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import re
@@ -14,10 +15,12 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
+from nanobot.agent.handoff import HandoffRouter
 from nanobot.agent.memory import MemoryConsolidator
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.handoff import TransferTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
@@ -63,6 +66,9 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        agent_name: str = "defaults",
+        handoff: HandoffRouter | None = None,
+        team_members: list[dict[str, str]] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -71,6 +77,7 @@ class AgentLoop:
         self.provider = provider
         self.workspace = workspace
         self.model = model or provider.get_default_model()
+        self.agent_name = agent_name
         self.max_iterations = max_iterations
         self.context_window_tokens = context_window_tokens
         self.web_search_config = web_search_config or WebSearchConfig()
@@ -79,7 +86,9 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace)
+        self.context = ContextBuilder(
+            workspace, team_members=team_members, current_agent=agent_name
+        )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -100,6 +109,11 @@ class AgentLoop:
         self._mcp_connecting = False
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._processing_lock = asyncio.Lock()
+        self._handoff_ctx: contextvars.ContextVar[tuple[InboundMessage, str] | None] = (
+            contextvars.ContextVar("handoff_ctx", default=None)
+        )
+        self.handoff: HandoffRouter | None = None
+        self._handoff_tools: dict[str, str] = {}
         self.memory_consolidator = MemoryConsolidator(
             workspace=workspace,
             provider=provider,
@@ -110,6 +124,8 @@ class AgentLoop:
             get_tool_definitions=self.tools.get_definitions,
         )
         self._register_default_tools()
+        if handoff:
+            self.attach_handoff(handoff)
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
@@ -128,6 +144,20 @@ class AgentLoop:
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
+
+    def attach_handoff(self, router: HandoffRouter) -> None:
+        """Attach a handoff router and register transfer tools."""
+        self.handoff = router
+        self._register_handoff_tools()
+
+    def _register_handoff_tools(self) -> None:
+        if not self.handoff:
+            return
+        for name in self.handoff.list_agent_names(exclude=self.agent_name):
+            tool = TransferTool(name)
+            self._handoff_tools[tool.name] = name
+            if not self.tools.has(tool.name):
+                self.tools.register(tool)
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -180,12 +210,13 @@ class AgentLoop:
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
-    ) -> tuple[str | None, list[str], list[dict]]:
+    ) -> tuple[str | None, list[str], list[dict], bool]:
         """Run the agent iteration loop."""
         messages = initial_messages
         iteration = 0
         final_content = None
         tools_used: list[str] = []
+        handoff_sent = False
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -217,6 +248,15 @@ class AgentLoop:
 
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
+                    if self.handoff and tool_call.name in self._handoff_tools:
+                        target = self._handoff_tools[tool_call.name]
+                        final_content, handoff_sent, tool_result = await self._handle_handoff(
+                            target
+                        )
+                        messages = self.context.add_tool_result(
+                            messages, tool_call.id, tool_call.name, tool_result
+                        )
+                        return final_content, tools_used, messages, handoff_sent
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
@@ -245,7 +285,39 @@ class AgentLoop:
                 "without completing the task. You can try breaking the task into smaller steps."
             )
 
-        return final_content, tools_used, messages
+        return final_content, tools_used, messages, handoff_sent
+
+    async def _handle_handoff(
+        self, target: str
+    ) -> tuple[str | None, bool, str]:
+        """Handle a handoff tool call and return (content, sent, tool_result)."""
+        if not self.handoff:
+            return (
+                "Sorry, handoff is not available.",
+                False,
+                "Handoff failed: router unavailable.",
+            )
+        ctx = self._handoff_ctx.get()
+        if not ctx:
+            return (
+                "Sorry, handoff is not available.",
+                False,
+                "Handoff failed: missing context.",
+            )
+        msg, session_key = ctx
+        outcome = await self.handoff.handoff(
+            self.agent_name, target, msg, session_key=session_key
+        )
+        tool_result = f"Handoff to {target}."
+        if outcome.sent:
+            return None, True, tool_result
+        if outcome.response:
+            return outcome.response.content, False, tool_result
+        return (
+            "Sorry, the handoff did not return a response.",
+            False,
+            tool_result,
+        )
 
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
@@ -342,6 +414,11 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        key = session_key or msg.session_key
+        if self.handoff:
+            target_name = self.handoff.route_for(key)
+            if target_name != self.agent_name:
+                return await self.handoff.dispatch(target_name, msg, session_key=key)
         # System messages: parse origin from chat_id ("channel:chat_id")
         if msg.channel == "system":
             channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
@@ -356,7 +433,7 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
             )
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
+            final_content, _, all_msgs, _ = await self._run_agent_loop(messages)
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
@@ -426,17 +503,26 @@ class AgentLoop:
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
 
-        final_content, _, all_msgs = await self._run_agent_loop(
-            initial_messages, on_progress=on_progress or _bus_progress,
-        )
+        token = self._handoff_ctx.set((msg, key))
+        final_content = None
+        all_msgs: list[dict] = []
+        handoff_sent = False
+        try:
+            final_content, _, all_msgs, handoff_sent = await self._run_agent_loop(
+                initial_messages, on_progress=on_progress or _bus_progress,
+            )
+        finally:
+            self._handoff_ctx.reset(token)
 
-        if final_content is None:
+        if final_content is None and not handoff_sent:
             final_content = "I've completed processing but have no response to give."
 
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
+        if handoff_sent:
+            return None
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None
 

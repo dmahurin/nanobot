@@ -19,14 +19,21 @@ class ContextBuilder:
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, team_members: list[dict[str, str]] | None = None,
+                 current_agent: str | None = None):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self.team_members = team_members or []
+        self.current_agent = current_agent
 
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity()]
+
+        team = self._build_team_context()
+        if team:
+            parts.append(team)
 
         bootstrap = self._load_bootstrap_files()
         if bootstrap:
@@ -52,6 +59,35 @@ Skills with available="false" need dependencies installed first - you can try in
 {skills_summary}""")
 
         return "\n\n---\n\n".join(parts)
+
+    def _build_team_context(self) -> str:
+        """Build team context with transfer guidance."""
+        if not self.team_members:
+            return ""
+        others = [
+            m for m in self.team_members
+            if m.get("name") and m.get("name") != self.current_agent
+        ]
+        if not others:
+            return ""
+        header = "## Team\n"
+        lines = []
+        if self.current_agent:
+            lines.append(f"You are the `{self.current_agent}` agent.")
+        lines.append(
+            "You can hand off this conversation to other top-level agents when they are better suited."
+        )
+        lines.append("Available teammates:")
+        for member in others:
+            name = member.get("name", "")
+            model = member.get("model", "")
+            suffix = f" (model: {model})" if model else ""
+            lines.append(f"- {name}{suffix}")
+        lines.append(
+            "To hand off, call the tool `transfer_to_<agent>` (e.g. `transfer_to_coder`). "
+            "Handoffs are invisible to the user; continue seamlessly after transferring."
+        )
+        return header + "\n".join(lines)
 
     def _get_identity(self) -> str:
         """Get the core identity section."""

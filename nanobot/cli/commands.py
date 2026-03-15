@@ -419,7 +419,7 @@ def gateway(
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
     provider = _make_provider(config)
-    provider_factory = lambda m, p_override="auto": _make_provider(config, m, p_override)
+    provider_factory = lambda m, p_override=None: _make_provider(config, m, p_override)
     session_manager = SessionManager(config.workspace_path)
 
     # Create cron service first (callback set after agent creation)
@@ -631,7 +631,7 @@ def agent(
 
     bus = MessageBus()
     provider = _make_provider(config)
-    provider_factory = lambda m, p_override="auto": _make_provider(config, m, p_override)
+    provider_factory = lambda m, p_override=None: _make_provider(config, m, p_override)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
     cron_store_path = get_cron_dir() / "jobs.json"

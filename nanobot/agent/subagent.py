@@ -19,7 +19,7 @@ from nanobot.providers.base import LLMProvider
 from nanobot.utils.helpers import build_assistant_message
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ExecToolConfig, WebSearchConfig
+    from nanobot.config.schema import ExecToolConfig, WebSearchConfig, SubagentConfig
 
 
 class SubagentManager:
@@ -35,12 +35,12 @@ class SubagentManager:
         web_proxy: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
-        subagent_configs: dict[str, "AgentsConfig"] | None = None,
-        provider_factory: Callable[[str], LLMProvider] | None = None,
+        subagent_configs: dict[str, "SubagentConfig"] | None = None,
+        provider_factory: Callable[[str, str], LLMProvider] | None = None,
+        parent_tools: ToolRegistry | None = None,
     ):
         self.provider = provider
         self.workspace = workspace
-        self.projects = projects
         self.bus = bus
         self.model = model or provider.get_default_model()
         self.web_search_config = web_search_config
@@ -49,6 +49,7 @@ class SubagentManager:
         self.restrict_to_workspace = restrict_to_workspace
         self.subagent_configs = subagent_configs or {}
         self.provider_factory = provider_factory
+        self.parent_tools = parent_tools
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
 
@@ -76,7 +77,7 @@ class SubagentManager:
 
         provider = self.provider
         if config and self.provider_factory:
-            provider = self.provider_factory(config.model)
+            provider = self.provider_factory(config.model, config.provider)
 
         bg_task = asyncio.create_task(
             self._run_subagent(
@@ -113,7 +114,7 @@ class SubagentManager:
         max_tokens: int,
         reasoning_effort: str | None,
         max_iterations: int,
-        config: "AgentsConfig | None",
+        config: "SubagentConfig | None",
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
@@ -126,15 +127,25 @@ class SubagentManager:
             tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
             tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
             tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(ExecTool(
-                working_dir=str(self.workspace),
-                timeout=self.exec_config.timeout,
-                restrict_to_workspace=self.restrict_to_workspace,
-                path_append=self.exec_config.path_append,
-            ))
-            tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
+            if self.exec_config:
+                tools.register(ExecTool(
+                    working_dir=str(self.workspace),
+                    timeout=self.exec_config.timeout,
+                    restrict_to_workspace=self.restrict_to_workspace,
+                    path_append=self.exec_config.path_append,
+                ))
+            if self.web_search_config:
+                tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
             tools.register(WebFetchTool(proxy=self.web_proxy))
-            
+
+            # Mount allowed MCP tools
+            if config and config.allowed_mcp_servers and self.parent_tools:
+                for server_name in config.allowed_mcp_servers:
+                    prefix = f"mcp_{server_name}_"
+                    for tool_name, tool in self.parent_tools._tools.items():
+                        if tool_name.startswith(prefix) or tool_name == server_name:
+                            tools.register(tool)
+
             system_prompt = self._build_subagent_prompt()
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},

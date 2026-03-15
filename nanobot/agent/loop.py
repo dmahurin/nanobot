@@ -63,6 +63,8 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        subagent_configs: dict | None = None,
+        provider_factory: Callable[[str, str], LLMProvider] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -78,6 +80,8 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.subagent_configs = subagent_configs or {}
+        self.provider_factory = provider_factory
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -91,6 +95,9 @@ class AgentLoop:
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            subagent_configs=self.subagent_configs,
+            provider_factory=self.provider_factory,
+            parent_tools=self.tools,
         )
 
         self._running = False

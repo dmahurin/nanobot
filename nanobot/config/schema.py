@@ -50,7 +50,7 @@ class SubagentConfig(Base):
     """Configuration for a specific subagent."""
 
     model: str
-    provider: str = "auto"
+    provider: str | None = None
     description: str = "A specialized subagent."
     latency: str | None = None
     cost: str | None = None

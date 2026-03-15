@@ -330,6 +330,7 @@ def _build_agent_team(
 
     agents = config.agents.list_members()
     team = [{"name": name, "model": cfg.model} for name, cfg in agents.items()]
+    primary_workspace = Path(next(iter(agents.values())).workspace).expanduser() if agents else Path(config.agents.defaults.workspace).expanduser()
 
     loops: dict[str, AgentLoop] = {}
     is_primary = True
@@ -341,6 +342,7 @@ def _build_agent_team(
             bus=bus,
             provider=provider,
             workspace=workspace,
+            initial_workspace=primary_workspace,
             model=cfg.model,
             max_iterations=cfg.max_tool_iterations,
             context_window_tokens=cfg.context_window_tokens,

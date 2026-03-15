@@ -55,6 +55,7 @@ class AgentLoop:
         bus: MessageBus,
         provider: LLMProvider,
         workspace: Path,
+        initial_workspace: Path | None = None,
         model: str | None = None,
         max_iterations: int = 40,
         context_window_tokens: int = 65_536,
@@ -76,6 +77,7 @@ class AgentLoop:
         self.channels_config = channels_config
         self.provider = provider
         self.workspace = workspace
+        self.initial_workspace = initial_workspace
         self.model = model or provider.get_default_model()
         self.agent_name = agent_name
         self.max_iterations = max_iterations
@@ -458,7 +460,11 @@ class AgentLoop:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
-        self.session_tools.setdefault(key, self._register_filesystem_tools(self.workspace / key.replace(':', '_')))
+        base_workspace = self.initial_workspace or self.workspace
+        self.session_tools.setdefault(
+            key,
+            self._register_filesystem_tools(base_workspace / key.replace(":", "_")),
+        )
 
         session_tools = self.session_tools[key]
 

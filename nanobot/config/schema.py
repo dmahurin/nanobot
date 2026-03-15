@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
@@ -254,7 +254,27 @@ class AgentDefaults(Base):
 class AgentsConfig(Base):
     """Agent configuration."""
 
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="allow")
+
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    members: dict[str, AgentDefaults] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _collect_members(self):
+        extras = self.model_extra or {}
+        for name, value in extras.items():
+            if name in {"defaults", "members"}:
+                continue
+            self.members[name] = AgentDefaults.model_validate(value)
+        return self
+
+    def get_member(self, name: str) -> AgentDefaults | None:
+        if name in {"defaults"}:
+            return self.defaults
+        return self.members.get(name)
+
+    def list_members(self) -> dict[str, AgentDefaults]:
+        return {"defaults": self.defaults, **self.members}
 
 
 class ProviderConfig(Base):

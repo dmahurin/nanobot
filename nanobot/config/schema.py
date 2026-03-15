@@ -42,6 +42,7 @@ class AgentDefaults(Base):
     # Deprecated compatibility field: accepted from old configs but ignored at runtime.
     memory_window: int | None = Field(default=None, exclude=True)
     reasoning_effort: str | None = None  # low / medium / high — enables LLM thinking mode
+    description: str | None = None
 
     @property
     def should_warn_deprecated_memory_window(self) -> bool:
@@ -66,12 +67,6 @@ class AgentsConfig(Base):
                 continue
             self.members[name] = AgentDefaults.model_validate(value)
         return self
-
-    def get_member(self, name: str) -> AgentDefaults | None:
-        return self.members.get(name)
-
-    def list_members(self) -> dict[str, AgentDefaults]:
-        return self.members
 
     @property
     def defaults(self) -> AgentDefaults:

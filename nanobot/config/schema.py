@@ -256,25 +256,37 @@ class AgentsConfig(Base):
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="allow")
 
-    defaults: AgentDefaults = Field(default_factory=AgentDefaults)
     members: dict[str, AgentDefaults] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _collect_members(self):
         extras = self.model_extra or {}
+        if "defaults" in extras:
+            self.members["defaults"] = AgentDefaults.model_validate(extras["defaults"])
         for name, value in extras.items():
-            if name in {"defaults", "members"}:
+            if name == "defaults":
                 continue
             self.members[name] = AgentDefaults.model_validate(value)
         return self
 
     def get_member(self, name: str) -> AgentDefaults | None:
-        if name in {"defaults"}:
-            return self.defaults
         return self.members.get(name)
 
     def list_members(self) -> dict[str, AgentDefaults]:
-        return {"defaults": self.defaults, **self.members}
+        return self.members
+
+    @property
+    def defaults(self) -> AgentDefaults:
+        if self.members:
+            return self.members[next(iter(self.members.keys()))]
+        return AgentDefaults()
+
+    @defaults.setter
+    def defaults(self, value: AgentDefaults) -> None:
+        if self.members:
+            first_key = next(iter(self.members.keys()))
+            self.members[first_key] = value
+            return
 
 
 class ProviderConfig(Base):

@@ -332,6 +332,7 @@ def _build_agent_team(
     team = [{"name": name, "model": cfg.model} for name, cfg in agents.items()]
 
     loops: dict[str, AgentLoop] = {}
+    is_primary = True
     for name, cfg in agents.items():
         workspace = Path(cfg.workspace).expanduser()
         sync_workspace_templates(workspace)
@@ -346,18 +347,20 @@ def _build_agent_team(
             web_search_config=config.tools.web.search,
             web_proxy=config.tools.web.proxy or None,
             exec_config=config.tools.exec,
-            cron_service=cron if name == "defaults" else None,
+            cron_service=cron if is_primary else None,
             restrict_to_workspace=config.tools.restrict_to_workspace,
-            session_manager=session_manager if (name == "defaults" and session_manager) else SessionManager(workspace),
+            session_manager=session_manager if (is_primary and session_manager) else SessionManager(workspace),
             mcp_servers=config.tools.mcp_servers,
             channels_config=config.channels,
             agent_name=name,
             team_members=team,
         )
         loops[name] = loop
+        is_primary = False
 
     if len(loops) > 1:
-        router = HandoffRouter(loops, default_name="defaults")
+        default_name = next(iter(loops.keys()))
+        router = HandoffRouter(loops, default_name=default_name)
         for loop in loops.values():
             loop.attach_handoff(router)
 
@@ -433,7 +436,7 @@ def gateway(
 
     # Create agent team (default + optional handoff agents)
     loops = _build_agent_team(config, bus=bus, cron=cron, session_manager=session_manager)
-    agent = loops["defaults"]
+    agent = next(iter(loops.values()))
 
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
@@ -592,7 +595,7 @@ def agent(
     cron = CronService(cron_store_path)
     bus = MessageBus()
     loops = _build_agent_team(config, bus=bus, cron=cron, session_manager=None)
-    agent_loop = loops["defaults"]
+    agent_loop = next(iter(loops.values()))
 
     if logs:
         logger.enable("nanobot")

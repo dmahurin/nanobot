@@ -219,7 +219,8 @@ class AgentLoop:
 
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
-                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+                    max_len = 60
+                    args_str = json.dumps({k: (v[:max_len-3]+"..." if isinstance(v,str) and len(v)>max_len else v) for k,v in tool_call.arguments.items()})
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(

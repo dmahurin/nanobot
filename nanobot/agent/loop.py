@@ -86,22 +86,6 @@ class AgentLoop:
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
-
-        # Resolve Consolidator Delegate
-        cons_config = next((c for c in self.subagent_configs.values() if "consolidator" in c.delegate), None)
-        cons_model = cons_config.model if cons_config else self.model
-        cons_provider = self.provider_factory(cons_config.model, cons_config.provider) if (cons_config and self.provider_factory) else provider
-
-        self.memory_consolidator = MemoryConsolidator(
-            workspace=workspace,
-            provider=cons_provider,
-            model=cons_model,
-            sessions=self.sessions,
-            context_window_tokens=context_window_tokens,
-            build_messages=self.context.build_messages,
-            get_tool_definitions=self.tools.get_definitions,
-        )
-
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -123,7 +107,15 @@ class AgentLoop:
         self._mcp_connecting = False
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._processing_lock = asyncio.Lock()
-
+        self.memory_consolidator = MemoryConsolidator(
+            workspace=workspace,
+            provider=provider,
+            model=self.model,
+            sessions=self.sessions,
+            context_window_tokens=context_window_tokens,
+            build_messages=self.context.build_messages,
+            get_tool_definitions=self.tools.get_definitions,
+        )
         self._register_default_tools()
 
     def _register_default_tools(self) -> None:

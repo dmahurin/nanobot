@@ -298,15 +298,15 @@ def _onboard_plugins(config_path: Path) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _make_provider(config: Config, model: str | None = None, provider_override: str | None = None):
+def _make_provider(config: Config, model: str | None = None):
     """Create the appropriate LLM provider from config."""
     from nanobot.providers.base import GenerationSettings
     from nanobot.providers.openai_codex_provider import OpenAICodexProvider
     from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
 
     model = model or config.agents.defaults.model
-    provider_name = config.get_provider_name(model, provider_override)
-    p = config.get_provider(model, provider_override)
+    provider_name = config.get_provider_name(model)
+    p = config.get_provider(model)
 
     # OpenAI Codex (OAuth)
     if provider_name == "openai_codex" or model.startswith("openai-codex/"):
@@ -316,7 +316,7 @@ def _make_provider(config: Config, model: str | None = None, provider_override: 
         from nanobot.providers.custom_provider import CustomProvider
         provider = CustomProvider(
             api_key=p.api_key if p else "no-key",
-            api_base=config.get_api_base(model, provider_override) or "http://localhost:8000/v1",
+            api_base=config.get_api_base(model) or "http://localhost:8000/v1",
             default_model=model,
         )
     # Azure OpenAI: direct Azure OpenAI endpoint with deployment name
@@ -341,7 +341,7 @@ def _make_provider(config: Config, model: str | None = None, provider_override: 
             raise typer.Exit(1)
         provider = LiteLLMProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model, provider_override),
+            api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
             provider_name=provider_name,
@@ -419,23 +419,12 @@ def gateway(
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
     provider = _make_provider(config)
-    provider_factory = lambda m, p_override="auto": _make_provider(config, m, p_override)
+    provider_factory = lambda m: _make_provider(config, m)
     session_manager = SessionManager(config.workspace_path)
 
     # Create cron service first (callback set after agent creation)
     cron_store_path = get_cron_dir() / "jobs.json"
     cron = CronService(cron_store_path)
-
-    # Extract Gateway Delegates
-    eval_config = next((c for c in config.agents.values() if "evaluator" in c.delegate), None)
-    eval_provider = provider_factory(eval_config.model, eval_config.provider) if eval_config else provider
-    eval_model = eval_config.model if eval_config else config.agents.defaults.model
-    eval_temp = eval_config.temperature if eval_config and eval_config.temperature is not None else 0.0
-
-    hb_config = next((c for c in config.agents.values() if "heartbeat_decider" in c.delegate), None)
-    hb_provider = provider_factory(hb_config.model, hb_config.provider) if hb_config else provider
-    hb_model = hb_config.model if hb_config else config.agents.defaults.model
-    hb_temp = hb_config.temperature if hb_config and hb_config.temperature is not None else 0.0
 
     # Create agent with cron service
     agent = AgentLoop(
@@ -491,10 +480,7 @@ def gateway(
 
         if job.payload.deliver and job.payload.to and response:
             should_notify = await evaluate_response(
-                response, job.payload.message, eval_provider, eval_model,
-                temperature=eval_temp,
-                reasoning_effort=eval_config.reasoning_effort if eval_config else None,
-                max_tokens=eval_config.max_tokens if eval_config and eval_config.max_tokens is not None else 256
+                response, job.payload.message, provider, agent.model,
             )
             if should_notify:
                 from nanobot.bus.events import OutboundMessage
@@ -558,12 +544,6 @@ def gateway(
         on_notify=on_heartbeat_notify,
         interval_s=hb_cfg.interval_s,
         enabled=hb_cfg.enabled,
-        decider_provider=hb_provider,
-        decider_model=hb_model,
-        decider_temperature=hb_temp,
-        evaluator_provider=eval_provider,
-        evaluator_model=eval_model,
-        evaluator_config=eval_config,
     )
 
     if channels.enabled_channels:
@@ -631,7 +611,7 @@ def agent(
 
     bus = MessageBus()
     provider = _make_provider(config)
-    provider_factory = lambda m, p_override="auto": _make_provider(config, m, p_override)
+    provider_factory = lambda m: _make_provider(config, m)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
     cron_store_path = get_cron_dir() / "jobs.json"

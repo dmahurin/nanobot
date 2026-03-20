@@ -30,6 +30,7 @@ class SubagentManager:
         self,
         provider: LLMProvider,
         workspace: Path,
+        projects: Path,
         bus: MessageBus,
         model: str | None = None,
         web_search_config: "WebSearchConfig | None" = None,
@@ -61,6 +62,7 @@ class SubagentManager:
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
+        project: str | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         task_id = str(uuid.uuid4())[:8]
@@ -83,7 +85,7 @@ class SubagentManager:
             self._run_subagent(
                 task_id, task, display_label, origin,
                 provider, agent_model, agent_temp, agent_max_tokens,
-                agent_reasoning, max_iterations, config
+                agent_reasoning, max_iterations, config, project
             )
         )
         self._running_tasks[task_id] = bg_task
@@ -115,6 +117,7 @@ class SubagentManager:
         reasoning_effort: str | None,
         max_iterations: int,
         config: "AgentsConfig | None",
+        project: str | None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
@@ -123,13 +126,15 @@ class SubagentManager:
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
             allowed_dir = self.workspace if self.restrict_to_workspace else None
-            extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
-            tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
-            tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            working_dir = self.projects / project if project else self.workspace
+            extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else []
+            extra = [self.workspace] if self.workspace != working_dir else []
+            tools.register(ReadFileTool(workspace=working_dir, allowed_dir=allowed_dir, extra_allowed_dirs=extra+extra_read))
+            tools.register(WriteFileTool(workspace=working_dir, allowed_dir=allowed_dir, extra_allowed_dirs=extra))
+            tools.register(EditFileTool(workspace=working_dir, allowed_dir=allowed_dir, extra_allowed_dirs=extra))
+            tools.register(ListDirTool(workspace=working_dir, allowed_dir=allowed_dir, extra_allowed_dirs=extra))
             tools.register(ExecTool(
-                working_dir=str(self.workspace),
+                working_dir=str(working_dir),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,

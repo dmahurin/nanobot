@@ -53,6 +53,7 @@ class AgentLoop:
         bus: MessageBus,
         provider: LLMProvider,
         workspace: Path,
+        projects: Path | None = None,
         model: str | None = None,
         max_iterations: int = 40,
         context_window_tokens: int = 65_536,
@@ -73,6 +74,7 @@ class AgentLoop:
         self.channels_config = channels_config
         self.provider = provider
         self.workspace = workspace
+        self.projects = projects or workspace
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
         self.context_window_tokens = context_window_tokens
@@ -91,6 +93,7 @@ class AgentLoop:
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
+            projects=projects,
             bus=bus,
             model=self.model,
             web_search_config=self.web_search_config,
@@ -167,12 +170,12 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
+    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None, project: str | None = None) -> None:
         """Update context for all tools that need routing info."""
         for name in ("message", "spawn", "cron"):
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
-                    tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
+                    tool.set_context(channel, chat_id, *([message_id] if name == "message" else []), *([project] if name == "spawn" else []))
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -405,7 +408,7 @@ class AgentLoop:
         session = self.sessions.get_or_create(key)
 
         project = msg.metadata.get('project', session.metadata.get('project', None))
-        session_dir = self.workspace / project if project else self.workspace
+        session_dir = self.projects / project if project else self.workspace
         if msg.content == '':
             if project: session_dir.mkdir(exist_ok=True)
             return None
@@ -429,7 +432,7 @@ class AgentLoop:
         elif cmd.startswith('/project '):
             project = cmd[cmd.find(' ')+1:]
             session.metadata['project'] = project
-            (self.workspace / project).mkdir(exist_ok=True)
+            (self.projects / project).mkdir(exist_ok=True)
             self.sessions.save(session)
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                                   content=f"Project changed to {project}.")
@@ -447,7 +450,7 @@ class AgentLoop:
             )
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"), project)
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()

@@ -16,6 +16,8 @@ from flask import Flask, Response, request, jsonify, render_template_string
 from werkzeug.serving import make_server
 from loguru import logger
 
+from pydantic import Field
+
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel

@@ -175,6 +175,7 @@ class ToolsConfig(Base):
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
+    projects: str = "~/.nanobot/projects"
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
@@ -191,6 +192,11 @@ class Config(BaseSettings):
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
         return Path(self.agents.defaults.workspace).expanduser()
+
+    @property
+    def projects_path(self) -> Path:
+        """Get expanded projects path."""
+        return Path(self.tools.projects_dir).expanduser()
 
     def _match_provider(
         self, model: str | None = None

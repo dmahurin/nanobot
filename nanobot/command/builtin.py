@@ -45,7 +45,7 @@ async def cmd_project(ctx: CommandContext) -> OutboundMessage:
     project = ctx.args
     session = ctx.session or loop.sessions.get_or_create(ctx.key)
     session.metadata['project'] = project
-    (loop.workspace / project).mkdir(exist_ok=True)
+    if self.projects: (self.projects / project).mkdir(exist_ok=True)
     loop.sessions.save(session)
     return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                           content=f"Project changed to {project}.")

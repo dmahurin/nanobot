@@ -41,6 +41,16 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
     return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content="Restarting...")
 
 
+async def cmd_project(ctx: CommandContext) -> OutboundMessage:
+    project = ctx.args
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    session.metadata['project'] = project
+    (loop.workspace / project).mkdir(exist_ok=True)
+    loop.sessions.save(session)
+    return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
+                          content=f"Project changed to {project}.")
+
+
 async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     """Build an outbound status message for a session."""
     loop = ctx.loop
@@ -89,6 +99,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
         "/new — Start a new conversation",
         "/stop — Stop the current task",
         "/restart — Restart the bot",
+        "/project <name> - Switch to another project",
         "/status — Show bot status",
         "/help — Show available commands",
     ]
@@ -108,3 +119,4 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/new", cmd_new)
     router.exact("/status", cmd_status)
     router.exact("/help", cmd_help)
+    router.prefix("/project ", cmd_project)

@@ -423,12 +423,20 @@ class AgentLoop:
             self.sessions.invalidate(session.key)
             return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
                                   content="New session started.")
-        if cmd == "/help":
+        elif cmd.startswith('/project '):
+            project = cmd[cmd.find(' ')+1:]
+            session.metadata['project'] = project
+            (self.workspace / project).mkdir(exist_ok=True)
+            self.sessions.save(session)
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
+                                  content=f"Project changed to {project}.")
+        elif cmd == "/help":
             lines = [
                 "🐈 nanobot commands:",
                 "/new — Start a new conversation",
                 "/stop — Stop the current task",
                 "/restart — Restart the bot",
+                "/project <name> - Switch to another project",
                 "/help — Show available commands",
             ]
             return OutboundMessage(

@@ -508,6 +508,13 @@ class AgentLoop:
                                   content="New session started.")
         if cmd == "/status":
             return self._status_response(msg, session)
+        elif cmd.startswith('/project '):
+            project = cmd[cmd.find(' ')+1:]
+            session.metadata['project'] = project
+            (self.workspace / project).mkdir(exist_ok=True)
+            self.sessions.save(session)
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
+                                  content=f"Project changed to {project}.")
         if cmd == "/help":
             lines = [
                 "🐈 nanobot commands:",
@@ -515,6 +522,7 @@ class AgentLoop:
                 "/stop — Stop the current task",
                 "/restart — Restart the bot",
                 "/status — Show bot status",
+                "/project <name> - Switch to another project",
                 "/help — Show available commands",
             ]
             return OutboundMessage(
